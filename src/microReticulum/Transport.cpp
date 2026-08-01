@@ -376,62 +376,66 @@ DestinationEntry empty_destination_entry;
 	//p thread = threading.Thread(target=Transport.jobloop, daemon=True)
 	//p thread.start()
 
-	// Load transport-related data
-	if (Reticulum::transport_enabled()) {
-		INFO("Transport mode is enabled");
-
-		// Read in path table
-		//read_path_table();
+	// Load persistent data stores. Every instance needs an identity cache, a
+	// path table and a packet hashlist to address anything at all, so these
+	// are not gated on transport mode. Gated, Identity::remember() fails on
+	// every inbound announce and no path is ever added.
+	// Read in path table
+	//read_path_table();
 #if defined(RNS_USE_FS) && RNS_PERSIST_PATHS
-		// CBA microStore
-		if (Utilities::OS::get_filesystem()) {
-			INFOF("FileSystem available: %lu bytes", Utilities::OS::get_filesystem().storageAvailable());
-			// CBA Must pass time offset into microStore for accurate timestamps on devices without a real-time clock
+	// CBA microStore
+	if (Utilities::OS::get_filesystem()) {
+		INFOF("FileSystem available: %lu bytes", Utilities::OS::get_filesystem().storageAvailable());
+		// CBA Must pass time offset into microStore for accurate timestamps on devices without a real-time clock
 #if defined(ARDUINO)
-			microStore::set_time_offset(Utilities::OS::getTimeOffset() / 1000);
+		microStore::set_time_offset(Utilities::OS::getTimeOffset() / 1000);
 #endif
-			TRACE("Initializing path table store...");
-			_path_store.init(Utilities::OS::get_filesystem(), "./path_store/", false, _path_store_segment_size, _path_store_segment_count);
-			// If the filesystem is full then clear the path store since it's of no use full anyway
-			if (Utilities::OS::get_filesystem().storageAvailable() > 0 && Utilities::OS::get_filesystem().storageAvailable() < 1024) {
-				WARNING("FileSystem is full, clearing existing path store");
-				_path_store.clear();
-			}
+		TRACE("Initializing path table store...");
+		_path_store.init(Utilities::OS::get_filesystem(), "./path_store/", false, _path_store_segment_size, _path_store_segment_count);
+		// If the filesystem is full then clear the path store since it's of no use full anyway
+		if (Utilities::OS::get_filesystem().storageAvailable() > 0 && Utilities::OS::get_filesystem().storageAvailable() < 1024) {
+			WARNING("FileSystem is full, clearing existing path store");
+			_path_store.clear();
 		}
+	}
 #endif // RNS_USE_FS && RNS_PERSIST_PATHS
 
 #if defined(RNS_USE_FS) && RNS_PERSIST_KNOWN_DESTINATIONS
-		if (Utilities::OS::get_filesystem()) {
-			// CBA Must pass time offset into microStore for accurate timestamps on devices without a real-time clock
+	if (Utilities::OS::get_filesystem()) {
+		// CBA Must pass time offset into microStore for accurate timestamps on devices without a real-time clock
 #if defined(ARDUINO)
-			microStore::set_time_offset(Utilities::OS::getTimeOffset() / 1000);
+		microStore::set_time_offset(Utilities::OS::getTimeOffset() / 1000);
 #endif
-			TRACE("Initializing known destinations store...");
-			Identity::_known_store.init(Utilities::OS::get_filesystem(), "./known_store/", false,
-				Identity::_known_store_segment_size, Identity::_known_store_segment_count);
-			if (Utilities::OS::get_filesystem().storageAvailable() > 0 && Utilities::OS::get_filesystem().storageAvailable() < 1024) {
-				WARNING("FileSystem is full, clearing existing known destinations store");
-				Identity::_known_store.clear();
-			}
+		TRACE("Initializing known destinations store...");
+		Identity::_known_store.init(Utilities::OS::get_filesystem(), "./known_store/", false,
+			Identity::_known_store_segment_size, Identity::_known_store_segment_count);
+		if (Utilities::OS::get_filesystem().storageAvailable() > 0 && Utilities::OS::get_filesystem().storageAvailable() < 1024) {
+			WARNING("FileSystem is full, clearing existing known destinations store");
+			Identity::_known_store.clear();
 		}
+	}
 #endif // RNS_USE_FS && RNS_PERSIST_KNOWN_DESTINATIONS
-		Identity::_known_store.set_max_recs(Identity::_known_destinations_maxsize);
+	Identity::_known_store.set_max_recs(Identity::_known_destinations_maxsize);
 
 #if defined(RNS_USE_FS) && RNS_PERSIST_HASHLIST
-		if (Utilities::OS::get_filesystem()) {
-			// CBA Must pass time offset into microStore for accurate timestamps on devices without a real-time clock
+	if (Utilities::OS::get_filesystem()) {
+		// CBA Must pass time offset into microStore for accurate timestamps on devices without a real-time clock
 #if defined(ARDUINO)
-			microStore::set_time_offset(Utilities::OS::getTimeOffset() / 1000);
+		microStore::set_time_offset(Utilities::OS::getTimeOffset() / 1000);
 #endif
-			TRACE("Initializing packet hashlist store...");
-			_packet_hash_store.init(Utilities::OS::get_filesystem(), "./hashlist_store/", false,
-				_hashlist_segment_size, _hashlist_segment_count);
-			if (Utilities::OS::get_filesystem().storageAvailable() > 0 && Utilities::OS::get_filesystem().storageAvailable() < 1024) {
-				WARNING("FileSystem is full, clearing existing packet hashlist store");
-				_packet_hash_store.clear();
-			}
+		TRACE("Initializing packet hashlist store...");
+		_packet_hash_store.init(Utilities::OS::get_filesystem(), "./hashlist_store/", false,
+			_hashlist_segment_size, _hashlist_segment_count);
+		if (Utilities::OS::get_filesystem().storageAvailable() > 0 && Utilities::OS::get_filesystem().storageAvailable() < 1024) {
+			WARNING("FileSystem is full, clearing existing packet hashlist store");
+			_packet_hash_store.clear();
 		}
+	}
 #endif // RNS_USE_FS && RNS_PERSIST_HASHLIST
+
+	// Load transport-related data
+	if (Reticulum::transport_enabled()) {
+		INFO("Transport mode is enabled");
 
 		// CBA The following write and clean is very resource intensive so skip at startup
 		// and let a later (optimized) scheduled write and clean take care of it.
