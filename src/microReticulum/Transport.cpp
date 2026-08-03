@@ -1226,7 +1226,14 @@ TRACEF("path_request_conditions=%u", path_request_conditions);
 				new_raw << packet.raw().mid(2);
 				sent = transmit(outbound_interface, new_raw);
 				//_path_table[packet.destination_hash][0] = time.time()
+				// destination_entry is a copy filled by _new_path_table.get(),
+				// not a reference into the table as it was before the microStore
+				// refactor, so assigning its _timestamp updates nothing. Touch
+				// the store's index instead: that is the timestamp the path
+				// table's eviction order and TTL are both measured against, and
+				// touching it costs no flash write.
 				destination_entry._timestamp = OS::time();
+				_new_path_table.touch(packet.destination_hash());
 #if RNS_NEIGHBOR_PROBING
 				// DIVERGENCE: count packets forwarded through this
 				// neighbor for passive liveness inference.
@@ -2110,7 +2117,10 @@ TRACEF("path_request_conditions=%u", path_request_conditions);
 						}
 						TRACE("Transport::outbound: Sending packet to next hop...");
 						transmit(outbound_interface, new_raw);
+						// See the note at the other transmit site: the entry is
+						// a copy, so the store's index is what has to be touched.
 						destination_entry._timestamp = OS::time();
+						_new_path_table.touch(packet.destination_hash());
 					}
 					else {
 						// TODO: There should probably be some kind of REJECT
