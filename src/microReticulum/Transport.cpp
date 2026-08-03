@@ -190,7 +190,9 @@ using namespace RNS::Persistence;
 /*static*/ Identity Transport::_network_identity({Type::NONE});
 
 /*static*/ std::set<Bytes> Transport::_remote_management_allowed;
+#if RNS_PINNED_DESTINATIONS
 /*static*/ std::set<Bytes> Transport::_pinned_destinations;
+#endif
 /*static*/ Destination Transport::_probe_destination({Type::NONE});
 /*static*/ Destination Transport::_remote_management_destination({Type::NONE});
 /*static*/ Destination Transport::_blackhole_destination({Type::NONE});
@@ -409,8 +411,11 @@ DestinationEntry empty_destination_entry;
 	// costs both the record cap and the compaction that reclaims expired
 	// records nothing ever reads.
 	_path_store.set_max_recs(_path_table_maxsize);
-	// Let pinned destinations survive eviction. No-op until something pins.
+#if RNS_PINNED_DESTINATIONS
+	// DIVERGENCE: let pinned destinations survive eviction. No-op until
+	// something pins. See RNS_PINNED_DESTINATIONS in Type.h.
 	_path_store.set_protect_fn(&Transport::_path_protect_callback);
+#endif
 
 #if defined(RNS_USE_FS) && RNS_PERSIST_KNOWN_DESTINATIONS
 	if (Utilities::OS::get_filesystem()) {
@@ -5673,6 +5678,8 @@ TRACEF("Transport::write_path_table: buffer size %lu bytes", Persistence::_buffe
 	return {Type::NONE};
 }
 
+#if RNS_PINNED_DESTINATIONS
+// DIVERGENCE: see RNS_PINNED_DESTINATIONS in Type.h.
 /*static*/ bool Transport::_path_protect_callback(const uint8_t* key, uint8_t key_len, void* /*ctx*/) {
 	if (_pinned_destinations.empty()) {
 		return false;
@@ -5692,6 +5699,7 @@ TRACEF("Transport::write_path_table: buffer size %lu bytes", Persistence::_buffe
 	TRACEF("Transport::unpin_destination: %s", destination_hash.toHex().c_str());
 	_pinned_destinations.erase(destination_hash);
 }
+#endif // RNS_PINNED_DESTINATIONS
 
 /*static*/ void Transport::cull_path_table() {
 	TRACE("Transport::cull_path_table()");

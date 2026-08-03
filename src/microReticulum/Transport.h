@@ -488,6 +488,11 @@ namespace RNS {
 		inline static uint16_t path_table_maxsize() { return _path_table_maxsize; }
 		inline static void path_table_maxsize(uint16_t path_table_maxsize) { _path_table_maxsize = path_table_maxsize; _path_store.set_max_recs(_path_table_maxsize); }
 
+#if RNS_PINNED_DESTINATIONS
+		// DIVERGENCE: no equivalent exists in the Python reference, which has
+		// no count cap on its path table and therefore nothing to protect
+		// against. See RNS_PINNED_DESTINATIONS in Type.h.
+		//
 		// Spare a destination's path from eviction. Age is a poor proxy for
 		// importance on a leaf node: a correspondent that announces rarely is
 		// more evictable than a stranger that announces constantly, and inside
@@ -503,6 +508,7 @@ namespace RNS {
 		static void unpin_destination(const Bytes& destination_hash);
 		inline static bool is_destination_pinned(const Bytes& destination_hash) { return _pinned_destinations.find(destination_hash) != _pinned_destinations.end(); }
 		inline static const std::set<Bytes>& pinned_destinations() { return _pinned_destinations; }
+#endif // RNS_PINNED_DESTINATIONS
 		inline static uint16_t announce_table_maxsize() { return _announce_table_maxsize; }
 		inline static void announce_table_maxsize(uint16_t announce_table_maxsize) { _announce_table_maxsize = announce_table_maxsize; }
 		inline static uint16_t hashlist_maxsize() { return _hashlist_maxsize; }
@@ -676,10 +682,13 @@ namespace RNS {
 		static Identity _network_identity;
 
 		static std::set<Bytes> _remote_management_allowed;
+#if RNS_PINNED_DESTINATIONS
+		// DIVERGENCE: see RNS_PINNED_DESTINATIONS in Type.h.
 		static std::set<Bytes> _pinned_destinations;
 		// Adapter between microStore's key-oriented protection callback and the
 		// pinned-destination set. Registered against _path_store in start().
 		static bool _path_protect_callback(const uint8_t* key, uint8_t key_len, void* ctx);
+#endif
 		static Destination _probe_destination;
 		static Destination _remote_management_destination;
 		static Destination _blackhole_destination;
