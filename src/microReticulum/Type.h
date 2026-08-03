@@ -43,6 +43,18 @@
 #define RNS_NEIGHBOR_PROBING 1
 #endif
 
+// DIVERGENCE: destinations can be pinned so the path table's record cap
+// spares them. The Python reference has no equivalent and could not use one:
+// its path table has no count cap, so it has nothing to protect against.
+// Pinning exists only as a corollary of the cap, deciding who the cap
+// sacrifices on a node too small to keep every path it hears.
+// Default on but inert - the pin set is empty until something pins, and an
+// empty set short-circuits. Set -DRNS_PINNED_DESTINATIONS=0 in build_flags to
+// compile the feature out entirely.
+#ifndef RNS_PINNED_DESTINATIONS
+#define RNS_PINNED_DESTINATIONS 1
+#endif
+
 // DIVERGENCE: Opt-in fallback that issues a path request when a
 // suspect neighbor's probe destination isn't in the path table.
 // Off by default.; set -DRNS_NEIGHBOR_PATH_REQUEST=1 in
