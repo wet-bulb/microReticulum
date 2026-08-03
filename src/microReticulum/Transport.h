@@ -487,6 +487,22 @@ namespace RNS {
 		static inline bool has_network_identity() { return (bool)_network_identity; }
 		inline static uint16_t path_table_maxsize() { return _path_table_maxsize; }
 		inline static void path_table_maxsize(uint16_t path_table_maxsize) { _path_table_maxsize = path_table_maxsize; _path_store.set_max_recs(_path_table_maxsize); }
+
+		// Spare a destination's path from eviction. Age is a poor proxy for
+		// importance on a leaf node: a correspondent that announces rarely is
+		// more evictable than a stranger that announces constantly, and inside
+		// a single second path timestamps tie and eviction order is arbitrary.
+		// Pinning lets the layer that knows which destinations matter - a
+		// contact list, an open conversation - say so.
+		//
+		// Soft priority: the path table still holds at path_table_maxsize()
+		// exactly. Unpinned paths are evicted oldest-first, and only when none
+		// remain is the oldest pinned path taken. Pinning more destinations
+		// than the table can hold is therefore safe and needs no error path.
+		static void pin_destination(const Bytes& destination_hash);
+		static void unpin_destination(const Bytes& destination_hash);
+		inline static bool is_destination_pinned(const Bytes& destination_hash) { return _pinned_destinations.find(destination_hash) != _pinned_destinations.end(); }
+		inline static const std::set<Bytes>& pinned_destinations() { return _pinned_destinations; }
 		inline static uint16_t announce_table_maxsize() { return _announce_table_maxsize; }
 		inline static void announce_table_maxsize(uint16_t announce_table_maxsize) { _announce_table_maxsize = announce_table_maxsize; }
 		inline static uint16_t hashlist_maxsize() { return _hashlist_maxsize; }
@@ -660,6 +676,10 @@ namespace RNS {
 		static Identity _network_identity;
 
 		static std::set<Bytes> _remote_management_allowed;
+		static std::set<Bytes> _pinned_destinations;
+		// Adapter between microStore's key-oriented protection callback and the
+		// pinned-destination set. Registered against _path_store in start().
+		static bool _path_protect_callback(const uint8_t* key, uint8_t key_len, void* ctx);
 		static Destination _probe_destination;
 		static Destination _remote_management_destination;
 		static Destination _blackhole_destination;
