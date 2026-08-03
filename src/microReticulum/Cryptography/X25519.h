@@ -87,12 +87,23 @@ namespace RNS { namespace Cryptography {
 */
 		X25519PrivateKey(const Bytes& privateKey) {
 			if (privateKey) {
-				// use specified private key
-				_privateKey = privateKey;
-				// similar to derive public key from private key
-				// second param "f" is secret
+				// use specified private key, clamped per RFC 7748 before use
+				//
+				// The reference applies this on ingestion, in
+				// X25519PrivateKey.from_private_bytes() via _fix_secret():
+				//     n &= ~7; n &= ~(128 << 8*31); n |= 64 << 8*31
+				//
+				// Curve25519::dh1() already clamps for generated keys, but
+				// eval() below is the raw curve function and does not. Without
+				// this, a generated key and an imported key holding the same
+				// bytes behave as different scalars.
+				uint8_t clamped[32];
+				memcpy(clamped, privateKey.data(), 32);
+				clamped[0]  &= 0xF8;
+				clamped[31]  = (clamped[31] & 0x7F) | 0x40;
+				_privateKey.assign(clamped, 32);
+				// derive public key from the clamped private key
 				//eval(uint8_t result[32], const uint8_t s[32], const uint8_t x[32])
-				// derive public key from private key
 				Curve25519::eval(_publicKey.writable(32), _privateKey.data(), 0);
 			}
 			else {
