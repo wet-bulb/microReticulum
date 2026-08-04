@@ -70,7 +70,7 @@ rns_fetch(debuglog       RNS_DEBUGLOG_SOURCE_DIR       https://github.com/hideak
 # Crypto and microStore have no upstream tags suitable for pinning, so pin commit SHAs.
 # Refresh by running `git ls-remote <url> HEAD` and updating the tag below.
 rns_fetch(crypto         RNS_CRYPTO_SOURCE_DIR         https://github.com/attermann/Crypto.git master)
-rns_fetch(microstore     RNS_MICROSTORE_SOURCE_DIR     https://github.com/attermann/microStore.git master)
+rns_fetch(microstore     RNS_MICROSTORE_SOURCE_DIR     https://github.com/wet-bulb/microStore.git thicket/integration)
 
 # -----------------------------------------------------------------------------
 # Third-party targets that don't ship CMakeLists.txt

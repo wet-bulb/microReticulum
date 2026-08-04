@@ -33,7 +33,7 @@
 		},
 		{
 			"name": "microStore",
-			"url": "https://github.com/attermann/microStore.git"
+			"url": "https://github.com/wet-bulb/microStore.git"
 		}
 	],
 	"frameworks": "*",
