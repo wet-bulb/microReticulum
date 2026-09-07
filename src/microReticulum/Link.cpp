@@ -880,86 +880,63 @@ void Link::tick_resources() {
 	for (auto& r : outgoing) r.__watchdog_job();
 }
 
-// CBA TODO Implement watchdog
+// Link watchdog. Python runs this as a per-link thread (Link.__watchdog_job in
+// RNS/Link.py); this port has no threads, so it runs cooperatively from
+// Transport::jobs() once per tick, alongside tick_resources(). Each call is
+// stateless: it reads the elapsed time, advances the link state, and never
+// blocks. Without it a link that stops receiving is never closed, so an
+// unproven link request, a silent peer, or a stalled transfer leaves the link
+// open indefinitely.
 void Link::start_watchdog() {
-	//z thread = threading.Thread(target=_object->___watchdog_job)
-	//z thread.daemon = True
-	//z thread.start()
+	// No thread to start; Transport::jobs() drives __watchdog_job() each tick.
 }
-
-/*p TODO
 
 void Link::__watchdog_job() {
 	assert(_object);
-	while not _object->_status == Type::Link::CLOSED:
-		while (_object->_watchdog_lock):
-			rtt_wait = 0.025
-			if hasattr(self, "rtt") and _object->_rtt:
-				rtt_wait = _object->_rtt
+	if (_object->_watchdog_lock) return;
+	const Type::Link::status status = _object->_status;
+	if (status == CLOSED) return;
 
-			sleep(max(rtt_wait, 0.025))
+	const double now = OS::time();
 
-		if not _object->_status == Type::Link::CLOSED:
-			# Link was initiated, but no response
-			# from destination yet
-			if _object->_status == PENDING:
-				next_check = _object->_request_time + _object->_establishment_timeout
-				sleep_time = next_check - OS::time()
-				if OS::time() >= _object->_request_time + _object->_establishment_timeout:
-					RNS.log("Link establishment timed out", RNS.LOG_VERBOSE)
-					_object->_status = Type::Link::CLOSED
-					_object->_teardown_reason = TIMEOUT
-					link_closed()
-					sleep_time = 0.001
-
-			elif _object->_status == Type::Link::HANDSHAKE:
-				next_check = _object->_request_time + _object->_establishment_timeout
-				sleep_time = next_check - OS::time()
-				if OS::time() >= _object->_request_time + _object->_establishment_timeout:
-					_object->_status = Type::Link::CLOSED
-					_object->_teardown_reason = TIMEOUT
-					link_closed()
-					sleep_time = 0.001
-
-					if _object->_initiator:
-						RNS.log("Timeout waiting for link request proof", RNS.LOG_DEBUG)
-					else:
-						RNS.log("Timeout waiting for RTT packet from link initiator", RNS.LOG_DEBUG)
-
-			elif _object->_status == Type::Link::ACTIVE:
-				activated_at = _object->_activated_at if _object->_activated_at != None else 0
-				last_inbound = max(max(_object->_last_inbound, _object->_last_proof), activated_at)
-
-				if OS::time() >= last_inbound + _object->_keepalive:
-					if _object->_initiator:
-						send_keepalive()
-
-					if OS::time() >= last_inbound + _object->_stale_time:
-						sleep_time = _object->_rtt * _object->_keepalive_timeout_factor + STALE_GRACE
-						_object->_status = STALE
-					else:
-						sleep_time = _object->_keepalive
-				
-				else:
-					sleep_time = (last_inbound + _object->_keepalive) - OS::time()
-
-			elif _object->_status == STALE:
-				sleep_time = 0.001
-				_object->_status = Type::Link::CLOSED
-				_object->_teardown_reason = TIMEOUT
-				link_closed()
-
-
-			if sleep_time == 0:
-				RNS.log("Warning! Link watchdog sleep time of 0!", RNS.LOG_ERROR)
-			if sleep_time == None or sleep_time < 0:
-				RNS.log("Timing error! Tearing down link "+str(self)+" now.", RNS.LOG_ERROR)
-				teardown()
-				sleep_time = 0.1
-
-			sleep(sleep_time)
-
-*/
+	if (status == PENDING || status == HANDSHAKE) {
+		// Establishment timeout: a link never proven (initiator) or never sent
+		// its RTT packet (responder) is closed rather than left pending.
+		if (now >= _object->_request_time + _object->_establishment_timeout) {
+			if (status == PENDING)
+				VERBOSE("Link establishment timed out");
+			else if (_object->_initiator)
+				DEBUG("Timeout waiting for link request proof");
+			else
+				DEBUG("Timeout waiting for RTT packet from link initiator");
+			_object->_status = CLOSED;
+			_object->_teardown_reason = TIMEOUT;
+			link_closed();
+		}
+	}
+	else if (status == ACTIVE) {
+		const double last_inbound = std::max(std::max(_object->_last_inbound, _object->_last_proof), _object->_activated_at);
+		if (now >= last_inbound + _object->_keepalive) {
+			// The initiator originates keepalives; the responder only answers
+			// them (receive(), context KEEPALIVE).
+			if (_object->_initiator) send_keepalive();
+			if (now >= last_inbound + _object->_stale_time) {
+				_object->_status = STALE;
+				_object->_stale_at = now;
+			}
+		}
+	}
+	else if (status == STALE) {
+		// A grace after going stale, so a last keepalive answer can still
+		// rescue the link, then close it as timed out.
+		const double grace = _object->_rtt * _object->_keepalive_timeout_factor + STALE_GRACE;
+		if (now >= _object->_stale_at + grace) {
+			_object->_status = CLOSED;
+			_object->_teardown_reason = TIMEOUT;
+			link_closed();
+		}
+	}
+}
 
 void Link::send_keepalive() {
 	assert(_object);
@@ -1640,8 +1617,11 @@ void Link::resource_concluded(const Resource& resource) {
 	// request/response flag bits from the advertisement and stores them on
 	// the Resource via accept(); here we route a completed request-resource
 	// or response-resource to the corresponding handler.
-	if (was_incoming && resource.status() == Type::Resource::COMPLETE
-	    && resource.request_id() && resource.request_id().size() > 0) {
+	// Dispatch on any concluded status, not only COMPLETE. Both handlers branch
+	// on the status: a COMPLETE response is delivered to the request, a failed
+	// one (CORRUPT) fails it. Guarding on COMPLETE here dropped a failed
+	// response resource silently, leaving the waiting request open.
+	if (was_incoming && resource.request_id() && resource.request_id().size() > 0) {
 		if (resource.is_response()) {
 			response_resource_concluded(resource);
 		}
@@ -1827,6 +1807,26 @@ void Link::attached_interface(const Interface& interface) {
 void Link::establishment_timeout(double timeout) {
 	assert(_object);
 	_object->_establishment_timeout = timeout;
+}
+
+uint16_t Link::keepalive() const {
+	assert(_object);
+	return _object->_keepalive;
+}
+
+void Link::keepalive(uint16_t seconds) {
+	assert(_object);
+	_object->_keepalive = seconds;
+}
+
+uint16_t Link::stale_time() const {
+	assert(_object);
+	return _object->_stale_time;
+}
+
+void Link::stale_time(uint16_t seconds) {
+	assert(_object);
+	_object->_stale_time = seconds;
 }
 
 void Link::establishment_cost(uint16_t cost) {

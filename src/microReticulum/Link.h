@@ -273,6 +273,13 @@ namespace RNS {
 		void destination(const Destination& destination);
 		void attached_interface(const Interface& interface);
 		void establishment_timeout(double timeout);
+		// Per-link keepalive and stale windows, in seconds. Settable so a test
+		// (or a caller wanting a tighter bound than the 360/720s defaults) can
+		// shorten them; the watchdog reads them each tick.
+		uint16_t keepalive() const;
+		void keepalive(uint16_t seconds);
+		uint16_t stale_time() const;
+		void stale_time(uint16_t seconds);
 		void establishment_cost(uint16_t cost);
 		void request_time(double time);
 		void last_inbound(double time);

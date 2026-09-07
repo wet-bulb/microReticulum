@@ -523,6 +523,8 @@ DestinationEntry empty_destination_entry;
 			if (OS::time() > (_links_last_checked + _links_check_interval)) {
 				std::set<Link> pending_links(_pending_links);
 				for (auto& link : pending_links) {
+					// Establishment timeout: close a link that never came up.
+					const_cast<Link&>(link).__watchdog_job();
 					if (link.status() == Type::Link::CLOSED) {
 						// If we are not a Transport Instance, finding a pending link
 						// that was never activated will trigger an expiry of the path
@@ -568,6 +570,11 @@ DestinationEntry empty_destination_entry;
 				// shared_ptr-backed mutation is the codebase convention.
 				for (auto& link_const : active_links) {
 					Link& link = const_cast<Link&>(link_const);
+					// Link watchdog first: keepalive, stale detection, close of a
+					// silent link. May move the link to CLOSED.
+					if (link.status() != Type::Link::CLOSED) {
+						link.__watchdog_job();
+					}
 					if (link.status() != Type::Link::CLOSED) {
 						link.tick_resources();
 					}

@@ -77,6 +77,7 @@ namespace RNS {
 		uint16_t _stale_time = Type::Link::STALE_TIME;
 		bool _watchdog_lock = false;
 		double _activated_at = 0.0;
+		double _stale_at = 0.0;   // when the link entered STALE, for the grace before close
 		// CBA LINK
 		//Type::Destination::types _type = Type::Destination::LINK;
 		Destination _owner = {Type::NONE};
