@@ -19,6 +19,7 @@
 #include "Transport.h"
 #include "Packet.h"
 #include "Identity.h"
+#include "bunzip.h"
 #include "Link.h"
 #include "Log.h"
 
@@ -687,36 +688,64 @@ void Resource::assemble() {
 			plaintext = stream;
 		}
 
+		// Strip the random_hash prefix (Python Resource.py:682). What remains is
+		// the content, bz2-compressed if the advertisement flagged it.
+		Bytes payload = plaintext.mid(Type::Resource::RANDOM_HASH_SIZE);
+		Bytes content;
+		bool decoded = true;
+
 		if (_object->_compressed) {
-			ERRORF("Received resource %s flagged as compressed, but bz2 is not supported on the C++ port. Rejecting.", _object->_hash.toHex().c_str());
-			_object->_status = Type::Resource::CORRUPT;
-			cancel();
-			return;
+			// Capped bz2 decompression. The scratch (tt) and the output are sized
+			// to the cap; the inverse-BWT array is four bytes per decompressed
+			// byte, so RNS_BUNZIP_CAP bounds the transient RAM. A block that would
+			// exceed the cap, or a corrupt stream, is rejected as CORRUPT, which
+			// concludes the resource and fails the request rather than leaving it
+			// open.
+			const size_t cap = RNS_BUNZIP_CAP;
+			uint8_t*  out = (uint8_t*)malloc(cap);
+			uint32_t* tt  = (uint32_t*)malloc(sizeof(uint32_t) * cap);
+			if (out == nullptr || tt == nullptr) {
+				ERRORF("Resource %s: out of memory decompressing", _object->_hash.toHex().c_str());
+				decoded = false;
+			}
+			else {
+				int r = bunzip(payload.data(), payload.size(), out, cap, tt, cap);
+				if (r < 0) {
+					ERRORF("Resource %s: bz2 decompress failed (%d)%s", _object->_hash.toHex().c_str(), r,
+					       r == BUNZIP_CAP ? " (exceeds the size cap)" : "");
+					decoded = false;
+				}
+				else {
+					content = Bytes(out, (size_t)r);
+				}
+			}
+			free(out);
+			free(tt);
+		}
+		else {
+			content = payload;
 		}
 
-		// Strip random_hash prefix (Python Resource.py:682).
-		Bytes data = plaintext.mid(Type::Resource::RANDOM_HASH_SIZE);
-
-		// Verify hash matches advertised hash. The on-wire layout is
-		//   plaintext = prepended_random_hash || content
-		// but the advertised hash is computed by the sender as
-		//   hash = full_hash(content || advertisement_random_hash)
-		// where advertisement_random_hash is sent separately in the
-		// ResourceAdvertisement (_r field, stored in _object->_random_hash).
-		// The two random hashes are *different* — the prepended one is
-		// just to prevent IV reuse on the wire; the appended one is what
-		// commits to the content via the advertised hash.
-		// Python Resource.py:694: `calculated_hash = RNS.Identity.full_hash(self.data+self.random_hash)`
-		Bytes calculated_hash = Identity::full_hash(data + _object->_random_hash);
-		if (calculated_hash != _object->_hash) {
+		if (!decoded) {
 			_object->_status = Type::Resource::CORRUPT;
 		}
 		else {
-			// Metadata: not supported — pass the whole body through as data.
-			// (Python Resource.py:696-710 extracts metadata + writes to disk.)
-			_object->_data   = data;
-			_object->_status = Type::Resource::COMPLETE;
-			prove();
+			// Verify hash matches advertised hash, computed by the sender over
+			// the UNCOMPRESSED content plus the advertisement random hash:
+			//   hash = full_hash(content || advertisement_random_hash)
+			// (a different random hash from the prepended one, which only
+			// prevents IV reuse on the wire). Python Resource.py:694.
+			Bytes calculated_hash = Identity::full_hash(content + _object->_random_hash);
+			if (calculated_hash != _object->_hash) {
+				_object->_status = Type::Resource::CORRUPT;
+			}
+			else {
+				// Metadata: not supported -- pass the whole body through as data.
+				// (Python Resource.py:696-710 extracts metadata + writes to disk.)
+				_object->_data   = content;
+				_object->_status = Type::Resource::COMPLETE;
+				prove();
+			}
 		}
 	}
 	catch (const std::exception& e) {
