@@ -30,6 +30,17 @@
 using namespace RNS;
 using namespace RNS::Utilities;
 
+// Largest inbound resource, in transfer (wire) bytes, this build will accept.
+// A received resource's parts accumulate in the container pool, and assemble
+// briefly holds a second copy, so an oversized resource can exhaust a fixed
+// pool and, with no catch on the receive path, terminate. On a pool-bounded
+// target set this to a value the pool can hold; 0 (the default) means no limit,
+// so host and desktop builds are unaffected. Compressed resources are still
+// bounded separately by RNS_BUNZIP_CAP on the decompressed size.
+#ifndef RNS_RESOURCE_MAX_SIZE
+#define RNS_RESOURCE_MAX_SIZE 0
+#endif
+
 
 // ============================================================================
 // Static creation entry points
@@ -62,6 +73,17 @@ Resource Resource::accept(const Packet& advertisement_packet, Callbacks::conclud
 	ResourceAdvertisement adv = ResourceAdvertisement::unpack(advertisement_packet.plaintext());
 	if (!adv._h) {
 		DEBUG("Could not decode resource advertisement, dropping resource");
+		return {Type::NONE};
+	}
+
+	// Reject an oversized resource before allocating anything for it. Its parts
+	// would otherwise fill the pool as they arrive and throw mid-reception,
+	// where nothing catches it. reject() sends RESOURCE_RCL so the sender stops
+	// rather than retransmitting into a wall.
+	if (RNS_RESOURCE_MAX_SIZE > 0 && (size_t)adv._t > (size_t)RNS_RESOURCE_MAX_SIZE) {
+		WARNINGF("Resource %s: transfer size %lu B over the %lu B accept limit; rejecting",
+		         adv._h.toHex().c_str(), (unsigned long)adv._t, (unsigned long)RNS_RESOURCE_MAX_SIZE);
+		reject(advertisement_packet);
 		return {Type::NONE};
 	}
 
