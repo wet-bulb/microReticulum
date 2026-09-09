@@ -126,7 +126,11 @@
 	#define MEMF(...) ((void)0)
 #endif
 
+// The line is formatted into this buffer on the stack, so on a small-stack
+// target it can be lowered with -DRNS_LOG_BUFFER_SIZE. Longer lines truncate.
+#ifndef RNS_LOG_BUFFER_SIZE
 #define RNS_LOG_BUFFER_SIZE 1024
+#endif
 
 namespace RNS {
 
