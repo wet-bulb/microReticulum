@@ -679,6 +679,12 @@ void Resource::assemble() {
 		for (auto& part : _object->_parts) {
 			if (part) stream.append(part.data());
 		}
+		// The parts now live in stream and are not read again for an inbound
+		// resource, so release them here. On an MCU every copy of the payload
+		// resident during decompression narrows the scratch the inverse-BWT can
+		// use, so the reassembly path holds one copy at a time, not four.
+		_object->_parts.clear();
+		_object->_parts.shrink_to_fit();
 
 		Bytes plaintext;
 		if (_object->_encrypted) {
@@ -687,40 +693,61 @@ void Resource::assemble() {
 		else {
 			plaintext = stream;
 		}
+		stream = Bytes::NONE;
 
 		// Strip the random_hash prefix (Python Resource.py:682). What remains is
-		// the content, bz2-compressed if the advertisement flagged it.
+		// the content, bz2-compressed if the advertisement flagged it. mid()
+		// copies, so payload owns its bytes and plaintext can go before the
+		// decompression scratch is allocated.
 		Bytes payload = plaintext.mid(Type::Resource::RANDOM_HASH_SIZE);
+		plaintext = Bytes::NONE;
 		Bytes content;
 		bool decoded = true;
 
 		if (_object->_compressed) {
-			// Capped bz2 decompression. The scratch (tt) and the output are sized
-			// to the cap; the inverse-BWT array is four bytes per decompressed
-			// byte, so RNS_BUNZIP_CAP bounds the transient RAM. A block that would
-			// exceed the cap, or a corrupt stream, is rejected as CORRUPT, which
-			// concludes the resource and fails the request rather than leaving it
-			// open.
-			const size_t cap = RNS_BUNZIP_CAP;
-			uint8_t*  out = (uint8_t*)malloc(cap);
-			uint32_t* tt  = (uint32_t*)malloc(sizeof(uint32_t) * cap);
-			if (out == nullptr || tt == nullptr) {
-				ERRORF("Resource %s: out of memory decompressing", _object->_hash.toHex().c_str());
+			// Capped bz2 decompression, sized to the ADVERTISED decompressed
+			// size rather than to the cap. The advertisement carries the
+			// uncompressed size, and the inverse-BWT array is four bytes per
+			// decompressed byte, so scratch is ~5x that size: a small page costs
+			// little, and only a page near the cap costs the maximum. A page
+			// advertising more than the cap is rejected BEFORE any allocation.
+			// That order matters on an MCU, where an oversized malloc faults
+			// rather than returning null, so the code must never request more
+			// than the cap it was sized for.
+			const size_t want = _object->_uncompressed_size;
+			if (want == 0 || want > RNS_BUNZIP_CAP) {
+				ERRORF("Resource %s: compressed payload advertises %lu B, over the %lu B cap; rejecting",
+				       _object->_hash.toHex().c_str(), (unsigned long)want, (unsigned long)RNS_BUNZIP_CAP);
 				decoded = false;
 			}
 			else {
-				int r = bunzip(payload.data(), payload.size(), out, cap, tt, cap);
-				if (r < 0) {
-					ERRORF("Resource %s: bz2 decompress failed (%d)%s", _object->_hash.toHex().c_str(), r,
-					       r == BUNZIP_CAP ? " (exceeds the size cap)" : "");
+				// out holds the raw output (want bytes). tt holds the BWT block,
+				// which is the RLE1-encoded data: it can run up to a quarter
+				// larger than the raw size when the data has runs of exactly four
+				// bytes (bzip2 emits a count byte after each), so give tt that
+				// headroom or a valid page is rejected mid-decode.
+				const size_t out_cap = want + 64;
+				const size_t tt_cap  = want + want / 4 + 64;
+				uint8_t*  out = (uint8_t*)malloc(out_cap);
+				uint32_t* tt  = (uint32_t*)malloc(sizeof(uint32_t) * tt_cap);
+				if (out == nullptr || tt == nullptr) {
+					ERRORF("Resource %s: out of memory decompressing %lu B", _object->_hash.toHex().c_str(), (unsigned long)want);
 					decoded = false;
 				}
 				else {
-					content = Bytes(out, (size_t)r);
+					int r = bunzip(payload.data(), payload.size(), out, out_cap, tt, tt_cap);
+					if (r < 0) {
+						ERRORF("Resource %s: bz2 decompress failed (%d)%s", _object->_hash.toHex().c_str(), r,
+						       r == BUNZIP_CAP ? " (exceeds the advertised size)" : "");
+						decoded = false;
+					}
+					else {
+						content = Bytes(out, (size_t)r);
+					}
 				}
+				free(out);
+				free(tt);
 			}
-			free(out);
-			free(tt);
 		}
 		else {
 			content = payload;
